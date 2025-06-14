@@ -1,8 +1,9 @@
-import { Image, StyleSheet, Platform, Button, View, Alert, TextInput } from 'react-native';
+import { Image, StyleSheet, Platform, Button, View, Alert, TextInput, Modal } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { useState, useEffect } from 'react';
 import OpenPGP, { Curve, KeyPair, Options, PublicKeyMetadata} from "react-native-fast-openpgp";
 import React from 'react';
+import * as Location from 'expo-location';
 
 import { HelloWave } from '@/components/HelloWave';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
@@ -124,6 +125,10 @@ export default function HomeScreen() {
   const [groupName, setGroupName] = useState('');
   const [memberKeyIds, setMemberKeyIds] = useState('');
   const [showGroupDialog, setShowGroupDialog] = useState(false);
+  const [loadingLocation, setLoadingLocation] = useState(false);
+  const [serverUrl, setServerUrl] = useState<string>('');
+  const [serverUrlInput, setServerUrlInput] = useState<string>('');
+  const [showServerModal, setShowServerModal] = useState(false);
 
   useEffect(() => {
     const loadExistingKeys = async () => {
@@ -139,6 +144,14 @@ export default function HomeScreen() {
     };
 
     loadExistingKeys();
+  }, []);
+
+  useEffect(() => {
+    const loadServerUrl = async () => {
+      const url = await SecureStore.getItemAsync('serverUrl');
+      if (url) setServerUrl(url);
+    };
+    loadServerUrl();
   }, []);
 
   const handleGenerateKeys = async () => {
@@ -197,6 +210,84 @@ export default function HomeScreen() {
     }
   };
 
+  const handleSendLocationUpdate = async () => {
+    setLoadingLocation(true);
+    try {
+      if (!serverUrl) throw new Error('Server URL not set. Please set it first.');
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied', 'Location permission is required.');
+        setLoadingLocation(false);
+        return;
+      }
+      const location = await Location.getCurrentPositionAsync({});
+      const token = await getSecret('token');
+      const privkey = await getSecret('privateKey');
+      if (!token || !privkey) {
+        Alert.alert('Error', 'Missing token or private key.');
+        setLoadingLocation(false);
+        return;
+      }
+      const groupsRes = await fetch(`${serverUrl}/api/groups`, {
+        headers: { 'authorization': `Bearer ${token}` }
+      });
+      if (!groupsRes.ok) throw new Error('Failed to fetch groups');
+      const groups = await groupsRes.json();
+      for (const group of groups) {
+        const otherMembers = group.members.filter((m: any) => m.keyid !== group.myKeyId);
+        if (otherMembers.length === 0) continue;
+        // Fetch public keys for other members individually
+        const pubkeyArr = [];
+        for (const member of otherMembers) {
+          const res = await fetch(`${serverUrl}/api/keys?keyId=${encodeURIComponent(member.keyid)}`, {
+            headers: { 'authorization': `Bearer ${token}` }
+          });
+          if (!res.ok) throw new Error('Failed to fetch public key for ' + member.keyid);
+          const data = await res.json();
+          if (data.publicKey) pubkeyArr.push(data.publicKey);
+        }
+        if (pubkeyArr.length === 0) continue;
+        const locationData = {
+          groupId: group.id,
+          timestamp: new Date().toISOString(),
+          coords: location.coords
+        };
+        const plaintext = JSON.stringify(locationData);
+        const publicKeys = pubkeyArr.join('\n');
+        const ciphertext = await OpenPGP.encrypt(plaintext, publicKeys);
+        console.log(ciphertext);
+        const postRes = await fetch(`${serverUrl}/api/location`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'authorization': `Bearer ${token}` },
+          body: JSON.stringify({ groupIds: [group.id], cipherText: ciphertext })
+        });
+        if (!postRes.ok) throw new Error('Failed to post location');
+      }
+      Alert.alert('Success', 'Location update sent to all groups.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to send location update');
+      console.error('Location update error:', e);
+    } finally {
+      setLoadingLocation(false);
+    }
+  };
+
+  const handleSetServerUrl = () => {
+    setServerUrlInput(serverUrl);
+    setShowServerModal(true);
+  };
+
+  const handleSaveServerUrl = async () => {
+    if (!serverUrlInput.startsWith('http://') && !serverUrlInput.startsWith('https://')) {
+      Alert.alert('Invalid URL', 'URL must start with http:// or https://');
+      return;
+    }
+    await SecureStore.setItemAsync('serverUrl', serverUrlInput);
+    setServerUrl(serverUrlInput);
+    setShowServerModal(false);
+    Alert.alert('Success', 'Server URL saved!');
+  };
+
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
@@ -219,6 +310,8 @@ export default function HomeScreen() {
             <Button title="Send Key to Server" onPress={handleSendKey} />
             <Button title="Request Token" onPress={requestAndVerifyToken} />
             <Button title="Create Group" onPress={() => setShowGroupDialog(true)} />
+            <Button title={loadingLocation ? 'Sending...' : 'Send Location Update'} onPress={handleSendLocationUpdate} disabled={loadingLocation} />
+            <Button title="Set Server URL" onPress={handleSetServerUrl} />
           </>
         )}
       </ThemedView>
@@ -244,6 +337,24 @@ export default function HomeScreen() {
             <View style={styles.dialogButtons}>
               <Button title="Cancel" onPress={() => setShowGroupDialog(false)} />
               <Button title="Create" onPress={handleCreateGroup} />
+            </View>
+          </ThemedView>
+        </View>
+      )}
+      {showServerModal && (
+        <View style={styles.dialogContainer}>
+          <ThemedView style={styles.dialog}>
+            <ThemedText type="subtitle">Set Server URL</ThemedText>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter server URL (e.g. http://link)"
+              value={serverUrlInput}
+              onChangeText={setServerUrlInput}
+              autoCapitalize="none"
+            />
+            <View style={styles.dialogButtons}>
+              <Button title="Cancel" onPress={() => setShowServerModal(false)} />
+              <Button title="Save" onPress={handleSaveServerUrl} />
             </View>
           </ThemedView>
         </View>
