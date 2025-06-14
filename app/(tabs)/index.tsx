@@ -9,116 +9,7 @@ import { HelloWave } from '@/components/HelloWave';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-
-async function saveSecret(key: string, value: string) {
-  await SecureStore.setItemAsync(key, value);
-}
-
-async function getSecret(key: string) {
-  return await SecureStore.getItemAsync(key);
-}
-
-async function generateAndSaveKeys() {
-  const options: Options = {
-    name: 'Test User',
-    email: 'j@sus.cx',
-    keyOptions: {
-      curve: Curve.CURVE25519,
-    }
-  };
-
-  const generated: KeyPair = await OpenPGP.generate(options);
-
-  await saveSecret('publicKey', generated.publicKey);
-  await saveSecret('privateKey', generated.privateKey);
-  return generated.publicKey;
-}
-
-async function sendKeyToServer(pubkey: string) {
-  try {
-    const response = await fetch('http://192.168.18.8:3000/api/signUp', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ pubkey }),
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    Alert.alert('Success', 'Public key sent to server successfully');
-    return data;
-  } catch (error) {
-    Alert.alert('Error', 'Failed to send public key to server');
-    console.error('Error sending key:', error);
-  }
-}
-
-async function requestAndVerifyToken() {
-  try {
-    // Get the stored keys
-    const pubkey = await getSecret("publicKey");
-    const privkey = await getSecret("privateKey");
-    
-    if (!pubkey || !privkey) {
-      Alert.alert('Error', 'No keys found. Please generate keys first.');
-      return;
-    }
-
-    // Get the key ID from metadata
-    const metadata = await OpenPGP.getPublicKeyMetadata(pubkey);
-    const keyId = metadata.keyID;
-
-    // Request token
-    const tokenResponse = await fetch('http://192.168.18.8:3000/api/requestToken', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ keyid: keyId }),
-    });
-
-    if (!tokenResponse.ok) {
-      throw new Error(`Token request failed: ${tokenResponse.status}`);
-    }
-
-    const { challenge } = await tokenResponse.json();
-
-    // Create a detached signature in the correct format
-    const signedMessage = `-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n${challenge}\n${await OpenPGP.sign(challenge, privkey, '')}`;
-
-    // Submit attestation
-    const attestationResponse = await fetch('http://192.168.18.8:3000/api/submitAttestation', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ signedChallenge: signedMessage }),
-    });
-
-    if (!attestationResponse.ok) {
-      throw new Error(`Attestation failed: ${attestationResponse.status}`);
-    }
-
-    const { tokenCipherText } = await attestationResponse.json();
-
-    // Decrypt the token
-    const decryptedToken = await OpenPGP.decrypt(tokenCipherText, privkey, ''); // Empty passphrase
-
-    // Parse the JSON and save just the token value
-    const tokenData = JSON.parse(decryptedToken);
-    await saveSecret('token', tokenData.token);
-    console.log('Token:', tokenData.token);
-    
-    Alert.alert('Success', 'Token received and stored successfully');
-  } catch (error) {
-    Alert.alert('Error', 'Failed to complete token request flow');
-    console.error('Error in token flow:', error);
-  }
-}
+import { saveSecret, getSecret, generateAndSaveKeys, sendKeyToServer, requestAndVerifyToken, getCurrentLocation } from '../lib/helpers';
 
 export default function HomeScreen() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -155,21 +46,38 @@ export default function HomeScreen() {
   }, []);
 
   const handleGenerateKeys = async () => {
-    const generatedPublicKey = await generateAndSaveKeys();
+    const options: Options = {
+      name: 'Test User',
+      email: 'j@sus.cx',
+      keyOptions: {
+        curve: Curve.CURVE25519,
+      }
+    };
+    const generatedPublicKey = await generateAndSaveKeys(options);
     setPublicKey(generatedPublicKey);
     Alert.alert('Public Key', `Public Key ID: ${generatedPublicKey}`);
     const pubkey = await getSecret("publicKey");
     const metadata = await OpenPGP.getPublicKeyMetadata(pubkey!);
     setPublicKey(metadata.keyID);
-
   };
 
   const handleSendKey = async () => {
     const pubkey = await getSecret("publicKey");
     if (pubkey) {
-      await sendKeyToServer(pubkey);
+      await sendKeyToServer(pubkey, serverUrl);
+      Alert.alert('Success', 'Public key sent to server successfully');
     } else {
       Alert.alert('Error', 'No public key found. Please generate keys first.');
+    }
+  };
+
+  const handleRequestToken = async () => {
+    try {
+      await requestAndVerifyToken(OpenPGP, getSecret, saveSecret, serverUrl);
+      Alert.alert('Success', 'Token received and stored successfully');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to complete token request flow');
+      console.error('Error in token flow:', error);
     }
   };
 
@@ -308,7 +216,7 @@ export default function HomeScreen() {
           <>
             <ThemedText>Public Key ID: {publicKey}</ThemedText>
             <Button title="Send Key to Server" onPress={handleSendKey} />
-            <Button title="Request Token" onPress={requestAndVerifyToken} />
+            <Button title="Request Token" onPress={handleRequestToken} />
             <Button title="Create Group" onPress={() => setShowGroupDialog(true)} />
             <Button title={loadingLocation ? 'Sending...' : 'Send Location Update'} onPress={handleSendLocationUpdate} disabled={loadingLocation} />
             <Button title="Set Server URL" onPress={handleSetServerUrl} />
