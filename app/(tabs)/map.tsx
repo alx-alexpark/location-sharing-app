@@ -1,11 +1,14 @@
 import React from 'react';
-import MapView from 'react-native-maps';
 import { StyleSheet, View } from 'react-native';
+import { LeafletView } from 'react-native-leaflet-view';
 
 export default function App() {
   return (
     <View style={styles.container}>
-      <MapView style={styles.map} />
+      <LeafletView
+        mapCenterPosition={{ lat: 37.7749, lng: -122.4194 }} // Example: San Francisco
+        zoom={13}
+      />
     </View>
   );
 }
@@ -13,8 +16,6 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  map: {
     width: '100%',
     height: '100%',
   },
