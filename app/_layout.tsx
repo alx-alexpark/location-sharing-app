@@ -11,6 +11,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import OpenPGP from 'react-native-fast-openpgp';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import * as Notifications from 'expo-notifications';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { handleLocationUpdate } from './lib/helpers';
@@ -97,6 +98,16 @@ export default function RootLayout() {
 
     const startBackgroundLocationTracking = async () => {
       console.log('Starting background location tracking setup...');
+      
+      // Request notification permission first
+      const { status: notificationStatus } = await Notifications.requestPermissionsAsync();
+      if (notificationStatus !== 'granted') {
+        console.error('Notification permission denied');
+        Alert.alert('Permission Denied', 'Notification permission is required for background location tracking');
+        return;
+      }
+      console.log('Notifications granted');
+
       const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync()
       console.log('Background permission status:', backgroundStatus);
       
@@ -119,6 +130,16 @@ export default function RootLayout() {
               notificationBody: 'Tracking your location in the background',
               notificationColor: '#4CAF50',
               killServiceOnDestroy: false,
+              notificationPriority: 'high',
+              notificationChannelId: 'location-tracking',
+              notificationChannelName: 'Location Tracking',
+              notificationChannelDescription: 'Shows when location tracking is active',
+              notificationChannelImportance: 'high',
+              notificationChannelShowBadge: true,
+              notificationChannelEnableVibration: true,
+              notificationChannelEnableLights: true,
+              startOnBoot: true,
+              stopOnTerminate: false
             },
             ios: undefined,
           });
@@ -132,7 +153,7 @@ export default function RootLayout() {
             foregroundService, // Only used on Android
             deferredUpdatesInterval: 60000, // Minimum time interval between updates
             deferredUpdatesDistance: 20, // Minimum distance between updates
-            activityType: Location.ActivityType.Other, // iOS only, helps keep the app active
+            activityType: Location.ActivityType.Other // iOS only, helps keep the app active
           });
           console.log('Started background location updates');
 
@@ -171,7 +192,7 @@ export default function RootLayout() {
         subscription.remove();
       }
       // Stop background location updates when component unmounts
-      Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME).catch(console.error);
+      // Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME).catch(console.error);
     };
   }, []);
 

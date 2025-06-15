@@ -10,7 +10,12 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "dev.parkalex.locationsharing"
+      "bundleIdentifier": "dev.parkalex.locationsharing",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,6 +23,16 @@
         "backgroundColor": "#ffffff"
       },
       "package": "dev.parkalex.locationsharing",
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ],
+      "config": {
+        "cleartextTrafficPermitted": true
+      }
     },
     "web": {
       "bundler": "metro",
@@ -33,7 +48,8 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
-        }
+        },
+        "@maplibre/maplibre-react-native"
       ],
       "expo-secure-store",
       "expo-asset",

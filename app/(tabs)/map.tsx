@@ -7,6 +7,7 @@ import OpenPGP from 'react-native-fast-openpgp';
 export default function App() {
   const [markers, setMarkers] = useState<any[]>([]);
   const [mapCenter, setMapCenter] = useState({ lat: 37.7749, lng: -122.4194 }); // Default: San Francisco
+  const [centerSet, setCenterSet] = useState(false);
 
   useEffect(() => {
     console.log('fetching locations');
@@ -46,9 +47,19 @@ export default function App() {
           }
         }
         setMarkers(markerList);
-        // Optionally center map on first marker
-        if (markerList.length > 0) {
-          setMapCenter({ lat: markerList[0].lat, lng: markerList[0].lng });
+
+        // Calculate bounds and update map view
+        const bounds = calculateBounds(markerList);
+        if (bounds) {
+          setMapCenter(bounds.center);
+          // Calculate zoom level based on the distance between points
+          const latDiff = Math.abs(bounds.bounds.northEast.lat - bounds.bounds.southWest.lat);
+          const lngDiff = Math.abs(bounds.bounds.northEast.lng - bounds.bounds.southWest.lng);
+          const maxDiff = Math.max(latDiff, lngDiff);
+          // Adjust zoom level based on the spread of markers
+          const newZoom = Math.floor(10 - Math.log2(maxDiff*2));
+          setZoom(Math.max(1, Math.min(18, newZoom))); // Clamp zoom between 1 and 18
+          console.log("zoom AAAAAAAAAAAA ZOOOM", zoom);
         }
       } catch (e: any) {
         Alert.alert('Error', e.message || 'Failed to load location updates');
