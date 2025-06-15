@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { StyleSheet, View, Alert } from 'react-native';
+import { StyleSheet, View, Alert, TouchableOpacity, Text } from 'react-native';
 import { LeafletView } from 'react-native-leaflet-view';
 import * as SecureStore from 'expo-secure-store';
 import OpenPGP from 'react-native-fast-openpgp';
@@ -9,15 +9,10 @@ const generateRandomId = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
-const defaultCamera = {
-  centerCoordinate: [-73.98004319979121, 40.75272669831773],
-  zoomLevel: 17,
-};
-
 export default function App() {
   const [markers, setMarkers] = useState<any[]>([]);
   const cameraRef = useRef<any>(null);
-  const [centerSet, setCenterSet] = useState(false);
+  const hasInitialized = useRef(false);
 
   const calculateBounds = (markerList: any[]) => {
     if (markerList.length === 0) return null;
@@ -42,6 +37,30 @@ export default function App() {
       southWest: { lat: minLat - latPadding, lng: minLng - lngPadding },
       northEast: { lat: maxLat + latPadding, lng: maxLng + lngPadding }
     };
+  };
+
+  const resetView = () => {
+    if (markers.length > 0 && cameraRef.current) {
+      const bounds = calculateBounds(markers);
+      if (bounds) {
+        cameraRef.current.fitBounds(
+          [bounds.northEast.lng, bounds.northEast.lat],
+          [bounds.southWest.lng, bounds.southWest.lat],
+          { padding: 50 },
+          100
+        );
+      }
+    }
+  };
+
+  const zoomToMarker = (marker: any) => {
+    if (cameraRef.current) {
+      cameraRef.current.setCamera({
+        centerCoordinate: [marker.lng, marker.lat],
+        zoomLevel: 15,
+        animationDuration: 300
+      });
+    }
   };
 
   useEffect(() => {
@@ -83,15 +102,18 @@ export default function App() {
         }
         setMarkers(markerList);
 
-        // Calculate bounds and update map view
-        const bounds = calculateBounds(markerList);
-        if (bounds) {
-          cameraRef.current.fitBounds(
-            [bounds.northEast.lng, bounds.northEast.lat],
-            [bounds.southWest.lng, bounds.southWest.lat],
-            { padding: 50 },
-            100
-          );
+        // Only do initial bounds fitting once when we first get markers
+        if (!hasInitialized.current && markerList.length > 0 && cameraRef.current) {
+          const bounds = calculateBounds(markerList);
+          if (bounds) {
+            cameraRef.current.fitBounds(
+              [bounds.northEast.lng, bounds.northEast.lat],
+              [bounds.southWest.lng, bounds.southWest.lat],
+              { padding: 50 },
+              100
+            );
+            hasInitialized.current = true;
+          }
         }
       } catch (e: any) {
         Alert.alert('Error', e.message || 'Failed to load location updates');
@@ -108,21 +130,6 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, []);
 
-  useEffect(() => {
-    if (markers.length > 0 && !centerSet && cameraRef.current) {
-      const bounds = calculateBounds(markers);
-      if (bounds) {
-        cameraRef.current.fitBounds(
-          [bounds.northEast.lng, bounds.northEast.lat],
-          [bounds.southWest.lng, bounds.southWest.lat],
-          { padding: 50 },
-          100
-        );
-        setCenterSet(true);
-      }
-    }
-  }, [markers, centerSet]);
-
   return (
     <View style={styles.container}>
       <MapView
@@ -132,8 +139,8 @@ export default function App() {
         <Camera 
           ref={cameraRef}
           defaultSettings={{
-            centerCoordinate: [-73.98004319979121, 40.75272669831773],
-            zoomLevel: 13
+            centerCoordinate: [0, 0],
+            zoomLevel: 1
           }} 
         />
         {markers.map((marker) => (
@@ -146,6 +153,7 @@ export default function App() {
             anchor={{ x: 0.5, y: 0.5 }}
             onSelected={(feature) => {
               console.log('Selected marker:', feature);
+              zoomToMarker(marker);
             }}
           >
             <View style={styles.marker}>
@@ -154,6 +162,12 @@ export default function App() {
           </PointAnnotation>
         ))}
       </MapView>
+      <TouchableOpacity 
+        style={styles.resetButton}
+        onPress={resetView}
+      >
+        <Text style={styles.resetButtonText}>Reset View</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -177,6 +191,26 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     backgroundColor: '#007AFF',
+  },
+  resetButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    backgroundColor: 'white',
+    padding: 12,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  resetButtonText: {
+    color: '#007AFF',
+    fontWeight: '600',
   },
 });
 
