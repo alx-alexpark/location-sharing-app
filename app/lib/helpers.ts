@@ -162,47 +162,35 @@ export async function handleCreateGroup({ groupName, memberKeyIds, getSecret, se
 
 /**
  * Sends a location update to all groups, encrypting for each group member and caching public keys.
+ * Takes a Location.LocationObject directly instead of getting current location.
  */
-export async function handleSendLocationUpdate({
-  setLoadingLocation,
-  getSecret,
-  OpenPGP,
+export async function handleLocationUpdate({
+  location,
 }: {
-  serverUrl: string,
-  setLoadingLocation: (loading: boolean) => void,
-  getSecret: (key: string) => Promise<string | null>,
-  OpenPGP: any,
+  location: Location.LocationObject
 }) {
-  console.log("AAAAAAAAA SENDING LOCATION UPDATE AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-  setLoadingLocation(true);
   try {
     const serverUrl = await SecureStore.getItemAsync('serverUrl');
     if (!serverUrl) throw new Error('Server URL not set. Please set it first.');
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      setLoadingLocation(false);
-      return { success: false, error: 'Location permission is required.' };
-    }
-    const location = await Location.getCurrentPositionAsync({});
-    console.log(location);
+    
     const token = await getSecret('token');
     const privkey = await getSecret('privateKey');
     if (!token || !privkey) {
-      setLoadingLocation(false);
       return { success: false, error: 'Missing token or private key.' };
     }
+
     const groupsRes = await fetch(`${serverUrl}/api/groups`, {
       headers: { 'authorization': `Bearer ${token}` }
     });
     if (!groupsRes.ok) throw new Error('Failed to fetch groups');
     const groups = await groupsRes.json();
+
     for (const group of groups) {
       const otherMembers = group.members.filter((m: any) => m.keyid !== group.myKeyId);
       if (otherMembers.length === 0) continue;
-      // Fetch public keys for other members individually, with caching
+
       const pubkeyArr = [];
       for (const member of otherMembers) {
-        // Try to get from cache
         let pubkey = await SecureStore.getItemAsync(`pubkey-${member.keyid}`);
         if (!pubkey) {
           const res = await fetch(`${serverUrl}/api/keys?keyId=${encodeURIComponent(member.keyid)}`, {
@@ -211,27 +199,28 @@ export async function handleSendLocationUpdate({
           if (!res.ok) throw new Error('Failed to fetch public key for ' + member.keyid);
           const data = await res.json();
           if (data.publicKey) {
-            // Verify keyid matches
             const metadata = await OpenPGP.getPublicKeyMetadata(data.publicKey);
             if (metadata.keyID === member.keyid) {
               await SecureStore.setItemAsync(`pubkey-${member.keyid}`, data.publicKey);
               pubkey = data.publicKey;
-            } else {
-              // Key ID mismatch, skip
             }
           }
         }
         if (pubkey) pubkeyArr.push(pubkey);
       }
+
       if (pubkeyArr.length === 0) continue;
+
       const locationData = {
         groupId: group.id,
         timestamp: new Date().toISOString(),
         coords: location.coords
       };
+
       const plaintext = JSON.stringify(locationData);
       const publicKeys = pubkeyArr.join('\n');
       const ciphertext = await OpenPGP.encrypt(plaintext, publicKeys);
+
       const postRes = await fetch(`${serverUrl}/api/location`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'authorization': `Bearer ${token}` },
@@ -242,8 +231,6 @@ export async function handleSendLocationUpdate({
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message || 'Failed to send location update', details: e };
-  } finally {
-    setLoadingLocation(false);
   }
 }
 
