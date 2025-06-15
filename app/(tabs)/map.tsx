@@ -1,13 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { StyleSheet, View, Alert } from 'react-native';
 import { LeafletView } from 'react-native-leaflet-view';
 import * as SecureStore from 'expo-secure-store';
 import OpenPGP from 'react-native-fast-openpgp';
+import { Camera, MapView, PointAnnotation } from '@maplibre/maplibre-react-native';
+
+const generateRandomId = () => {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
+
+const defaultCamera = {
+  centerCoordinate: [-73.98004319979121, 40.75272669831773],
+  zoomLevel: 17,
+};
 
 export default function App() {
   const [markers, setMarkers] = useState<any[]>([]);
-  const [mapCenter, setMapCenter] = useState({ lat: 37.7749, lng: -122.4194 }); // Default: San Francisco
-  const [zoom, setZoom] = useState(13);
+  const cameraRef = useRef<any>(null);
   const [centerSet, setCenterSet] = useState(false);
 
   const calculateBounds = (markerList: any[]) => {
@@ -30,14 +39,8 @@ export default function App() {
     const lngPadding = (maxLng - minLng) * 0.1;
 
     return {
-      center: {
-        lat: (minLat + maxLat) / 2,
-        lng: (minLng + maxLng) / 2
-      },
-      bounds: {
-        southWest: { lat: minLat - latPadding, lng: minLng - lngPadding },
-        northEast: { lat: maxLat + latPadding, lng: maxLng + lngPadding }
-      }
+      southWest: { lat: minLat - latPadding, lng: minLng - lngPadding },
+      northEast: { lat: maxLat + latPadding, lng: maxLng + lngPadding }
     };
   };
 
@@ -83,15 +86,12 @@ export default function App() {
         // Calculate bounds and update map view
         const bounds = calculateBounds(markerList);
         if (bounds) {
-          setMapCenter(bounds.center);
-          // Calculate zoom level based on the distance between points
-          const latDiff = Math.abs(bounds.bounds.northEast.lat - bounds.bounds.southWest.lat);
-          const lngDiff = Math.abs(bounds.bounds.northEast.lng - bounds.bounds.southWest.lng);
-          const maxDiff = Math.max(latDiff, lngDiff);
-          // Adjust zoom level based on the spread of markers
-          const newZoom = Math.floor(10 - Math.log2(maxDiff*2));
-          setZoom(Math.max(1, Math.min(18, newZoom))); // Clamp zoom between 1 and 18
-          console.log("zoom AAAAAAAAAAAA ZOOOM", zoom);
+          cameraRef.current.fitBounds(
+            [bounds.northEast.lng, bounds.northEast.lat],
+            [bounds.southWest.lng, bounds.southWest.lat],
+            { padding: 50 },
+            100
+          );
         }
       } catch (e: any) {
         Alert.alert('Error', e.message || 'Failed to load location updates');
@@ -108,27 +108,52 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, []);
 
+  useEffect(() => {
+    if (markers.length > 0 && !centerSet && cameraRef.current) {
+      const bounds = calculateBounds(markers);
+      if (bounds) {
+        cameraRef.current.fitBounds(
+          [bounds.northEast.lng, bounds.northEast.lat],
+          [bounds.southWest.lng, bounds.southWest.lat],
+          { padding: 50 },
+          100
+        );
+        setCenterSet(true);
+      }
+    }
+  }, [markers, centerSet]);
+
   return (
     <View style={styles.container}>
-      <LeafletView
-        mapCenterPosition={mapCenter}
-        zoom={zoom}
-        mapMarkers={markers.map(m => ({
-          position: { lat: m.lat, lng: m.lng },
-          icon: "🚨",
-          iconAnchor: [6, 20],
-          size: [32, 32],
-          id: String(m.id),
-          title: `${m.user.fullName || m.user.keyid} @ ${new Date(m.timestamp).toLocaleString('en-US', { 
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit', 
-            minute: '2-digit', 
-            hour12: false 
-          })}`,
-        }))}
-      />
+      <MapView
+        style={{ flex: 1 }}
+        mapStyle={mapStyle}
+      >
+        <Camera 
+          ref={cameraRef}
+          defaultSettings={{
+            centerCoordinate: [-73.98004319979121, 40.75272669831773],
+            zoomLevel: 13
+          }} 
+        />
+        {markers.map((marker) => (
+          <PointAnnotation
+            key={generateRandomId()}
+            id={generateRandomId()}
+            coordinate={[marker.lng, marker.lat]}
+            title={marker.user}
+            snippet={`Last updated: ${new Date(marker.timestamp).toLocaleString()}`}
+            anchor={{ x: 0.5, y: 0.5 }}
+            onSelected={(feature) => {
+              console.log('Selected marker:', feature);
+            }}
+          >
+            <View style={styles.marker}>
+              <View style={styles.markerDot} />
+            </View>
+          </PointAnnotation>
+        ))}
+      </MapView>
     </View>
   );
 }
@@ -139,4 +164,38 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-}); 
+  marker: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 122, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  markerDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#007AFF',
+  },
+});
+
+const mapStyle = {
+  "version": 8,
+	"sources": {
+    "osm": {
+			"type": "raster",
+			"tiles": ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+			"tileSize": 256,
+      "attribution": "&copy; OpenStreetMap Contributors",
+      "maxzoom": 19
+    }
+  },
+  "layers": [
+    {
+      "id": "osm",
+      "type": "raster",
+      "source": "osm" // This must match the source key above
+    }
+  ]
+};
