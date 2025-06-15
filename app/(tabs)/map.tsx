@@ -7,7 +7,39 @@ import OpenPGP from 'react-native-fast-openpgp';
 export default function App() {
   const [markers, setMarkers] = useState<any[]>([]);
   const [mapCenter, setMapCenter] = useState({ lat: 37.7749, lng: -122.4194 }); // Default: San Francisco
+  const [zoom, setZoom] = useState(13);
   const [centerSet, setCenterSet] = useState(false);
+
+  const calculateBounds = (markerList: any[]) => {
+    if (markerList.length === 0) return null;
+
+    let minLat = markerList[0].lat;
+    let maxLat = markerList[0].lat;
+    let minLng = markerList[0].lng;
+    let maxLng = markerList[0].lng;
+
+    markerList.forEach(marker => {
+      minLat = Math.min(minLat, marker.lat);
+      maxLat = Math.max(maxLat, marker.lat);
+      minLng = Math.min(minLng, marker.lng);
+      maxLng = Math.max(maxLng, marker.lng);
+    });
+
+    // Add some padding
+    const latPadding = (maxLat - minLat) * 0.1;
+    const lngPadding = (maxLng - minLng) * 0.1;
+
+    return {
+      center: {
+        lat: (minLat + maxLat) / 2,
+        lng: (minLng + maxLng) / 2
+      },
+      bounds: {
+        southWest: { lat: minLat - latPadding, lng: minLng - lngPadding },
+        northEast: { lat: maxLat + latPadding, lng: maxLng + lngPadding }
+      }
+    };
+  };
 
   useEffect(() => {
     console.log('fetching locations');
@@ -80,7 +112,7 @@ export default function App() {
     <View style={styles.container}>
       <LeafletView
         mapCenterPosition={mapCenter}
-        zoom={13}
+        zoom={zoom}
         mapMarkers={markers.map(m => ({
           position: { lat: m.lat, lng: m.lng },
           icon: "🚨",
