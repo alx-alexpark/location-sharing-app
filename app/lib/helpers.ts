@@ -173,17 +173,21 @@ export async function handleLocationUpdate({
     const serverUrl = await SecureStore.getItemAsync('serverUrl');
     if (!serverUrl) throw new Error('Server URL not set. Please set it first.');
     
-    const token = await getSecret('token');
-    const privkey = await getSecret('privateKey');
+    const token = await SecureStore.getItemAsync('token');
+    const privkey = await SecureStore.getItemAsync('privateKey');
     if (!token || !privkey) {
       return { success: false, error: 'Missing token or private key.' };
     }
+
+    console.log("SENDING API REQ NOW")
 
     const groupsRes = await fetch(`${serverUrl}/api/groups`, {
       headers: { 'authorization': `Bearer ${token}` }
     });
     if (!groupsRes.ok) throw new Error('Failed to fetch groups');
     const groups = await groupsRes.json();
+
+    console.log("FETCHED GROUPS")
 
     for (const group of groups) {
       const otherMembers = group.members.filter((m: any) => m.keyid !== group.myKeyId);
@@ -230,6 +234,7 @@ export async function handleLocationUpdate({
     }
     return { success: true };
   } catch (e: any) {
+    console.error('Location update error:', e);
     return { success: false, error: e.message || 'Failed to send location update', details: e };
   }
 }

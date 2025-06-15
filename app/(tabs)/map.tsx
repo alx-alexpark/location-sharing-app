@@ -73,6 +73,7 @@ export default function App() {
         mapMarkers={markers.map(m => ({
           position: { lat: m.lat, lng: m.lng },
           icon: "🚨",
+          iconAnchor: [6, 20],
           size: [32, 32],
           id: String(m.id),
           title: `${m.user.fullName || m.user.keyid} @ ${new Date(m.timestamp).toLocaleString('en-US', { 
