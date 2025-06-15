@@ -19,7 +19,7 @@ export default function App() {
           Alert.alert('Error', 'Missing server URL, token, or private key.');
           return;
         }
-        const res = await fetch(`${serverUrl}/api/location?limit=50`, {
+        const res = await fetch(`${serverUrl}/api/location?limit=1`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!res.ok) throw new Error('Failed to fetch location updates');
@@ -54,7 +54,15 @@ export default function App() {
         Alert.alert('Error', e.message || 'Failed to load location updates');
       }
     };
+
+    // Initial fetch
     fetchLocations();
+
+    // Set up polling every 5 seconds
+    const intervalId = setInterval(fetchLocations, 2500);
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(intervalId);
   }, []);
 
   return (
@@ -67,7 +75,14 @@ export default function App() {
           icon: "🚨",
           size: [32, 32],
           id: String(m.id),
-          tooltip: `${m.user.fullName || m.user.keyid} @ ${new Date(m.timestamp).toLocaleString()}`,
+          title: `${m.user.fullName || m.user.keyid} @ ${new Date(m.timestamp).toLocaleString('en-US', { 
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit', 
+            minute: '2-digit', 
+            hour12: false 
+          })}`,
         }))}
       />
     </View>

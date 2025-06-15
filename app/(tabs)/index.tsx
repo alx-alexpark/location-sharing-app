@@ -1,15 +1,91 @@
-import { Image, StyleSheet, Platform, Button, View, Alert, TextInput, Modal } from 'react-native';
+import { Image, StyleSheet, Platform, Button, View, Alert, TextInput, Modal, Switch } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { useState, useEffect } from 'react';
 import OpenPGP, { Curve, KeyPair, Options, PublicKeyMetadata} from "react-native-fast-openpgp";
 import React from 'react';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 
 import { HelloWave } from '@/components/HelloWave';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import { saveSecret, getSecret, generateAndSaveKeys, sendKeyToServer, requestAndVerifyToken, getCurrentLocation } from '../lib/helpers';
+import { saveSecret, getSecret, generateAndSaveKeys, sendKeyToServer, requestAndVerifyToken, getCurrentLocation, handleGenerateKeys, handleSendKey, handleRequestToken, handleCreateGroup, handleSendLocationUpdate, handleSaveServerUrl, handleSetServerUrl } from '../lib/helpers';
+
+const LOCATION_TASK_NAME = 'location-updates-task-name';
+
+interface LocationTaskData {
+  locations: Location.LocationObject[];
+}
+
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: { data: LocationTaskData | null; error: Error | null }) => {
+  if (error) {
+    console.error('Background location task error:', error);
+    return;
+  }
+  if (data) {
+    const { locations } = data;
+    console.log("BGDATA" + JSON.stringify(data));
+    const location = locations[0];
+    if (location) {
+      console.log("SUSSY");
+      try {
+        const serverUrl = await SecureStore.getItemAsync('serverUrl');
+        const token = await SecureStore.getItemAsync('token');
+        const privkey = await SecureStore.getItemAsync('privateKey');
+        if (!serverUrl || !token || !privkey) {
+          console.error('Missing server URL, token, or private key for background update');
+          return;
+        }
+        const groupsRes = await fetch(`${serverUrl}/api/groups`, {
+          headers: { 'authorization': `Bearer ${token}` }
+        });
+        if (!groupsRes.ok) throw new Error('Failed to fetch groups');
+        const groups = await groupsRes.json();
+        for (const group of groups) {
+          const otherMembers = group.members.filter((m: any) => m.keyid !== group.myKeyId);
+          if (otherMembers.length === 0) continue;
+          const pubkeyArr = [];
+          for (const member of otherMembers) {
+            let pubkey = await SecureStore.getItemAsync(`pubkey-${member.keyid}`);
+            if (!pubkey) {
+              const res = await fetch(`${serverUrl}/api/keys?keyId=${encodeURIComponent(member.keyid)}`, {
+                headers: { 'authorization': `Bearer ${token}` }
+              });
+              if (!res.ok) continue;
+              const data = await res.json();
+              if (data.publicKey) {
+                const metadata = await OpenPGP.getPublicKeyMetadata(data.publicKey);
+                if (metadata.keyID === member.keyid) {
+                  await SecureStore.setItemAsync(`pubkey-${member.keyid}`, data.publicKey);
+                  pubkey = data.publicKey;
+                }
+              }
+            }
+            if (pubkey) pubkeyArr.push(pubkey);
+          }
+          if (pubkeyArr.length === 0) continue;
+          const locationData = {
+            groupId: group.id,
+            timestamp: new Date().toISOString(),
+            coords: location.coords
+          };
+          const plaintext = JSON.stringify(locationData);
+          const publicKeys = pubkeyArr.join('\n');
+          const ciphertext = await OpenPGP.encrypt(plaintext, publicKeys);
+          const postRes = await fetch(`${serverUrl}/api/location`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'authorization': `Bearer ${token}` },
+            body: JSON.stringify({ groupIds: [group.id], cipherText: ciphertext })
+          });
+          if (!postRes.ok) console.error('Failed to post background location');
+        }
+      } catch (e) {
+        console.error('Background location update error:', e);
+      }
+    }
+  }
+});
 
 export default function HomeScreen() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -20,6 +96,8 @@ export default function HomeScreen() {
   const [serverUrl, setServerUrl] = useState<string>('');
   const [serverUrlInput, setServerUrlInput] = useState<string>('');
   const [showServerModal, setShowServerModal] = useState(false);
+  const [isBackgroundSharing, setIsBackgroundSharing] = useState(false);
+  const [locationSubscription, setLocationSubscription] = useState<Location.LocationSubscription | null>(null);
 
   useEffect(() => {
     const loadExistingKeys = async () => {
@@ -45,7 +123,92 @@ export default function HomeScreen() {
     loadServerUrl();
   }, []);
 
-  const handleGenerateKeys = async () => {
+  // Add useEffect for auto-updates
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    // Send initial update immediately
+    onSendLocationUpdate(false);
+    
+    // Then set up interval for every 20 seconds
+    intervalId = setInterval(() => {
+      onSendLocationUpdate(false);
+    }, 20000);
+
+    // Cleanup function to clear interval when component unmounts
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, []); // Empty dependency array means this runs once when component mounts
+
+  useEffect(() => {
+    // Check if background sharing was previously enabled
+    SecureStore.getItemAsync('backgroundSharing').then(value => {
+      if (value === 'true') {
+        startBackgroundLocation();
+      }
+    });
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
+  }, []);
+
+  const onCreateGroup = async () => {
+    const result = await handleCreateGroup({
+      groupName,
+      memberKeyIds,
+      getSecret,
+      serverUrl,
+      setShowGroupDialog,
+      setGroupName,
+      setMemberKeyIds,
+    });
+    if (result.success) {
+      Alert.alert('Success', 'Group created successfully');
+    } else {
+      Alert.alert('Error', result.error);
+      if (result.details) console.error('Error creating group:', result.details);
+    }
+  };
+
+  const onSendLocationUpdate = async (showAlerts = true) => {
+    const result = await handleSendLocationUpdate({
+      serverUrl,
+      setLoadingLocation,
+      getSecret,
+      OpenPGP,
+    });
+    if (showAlerts) {
+      if (result.success) {
+        Alert.alert('Success', 'Location update sent to all groups.');
+      } else {
+        Alert.alert('Error', result.error);
+        if (result.details) console.error('Location update error:', result.details);
+      }
+    }
+  };
+
+  const onSaveServerUrl = async () => {
+    const result = await handleSaveServerUrl(serverUrlInput, setServerUrl, setShowServerModal);
+    if (result.success) {
+      Alert.alert('Success', 'Server URL saved!');
+    } else {
+      Alert.alert('Invalid URL', result.error);
+    }
+  };
+
+  const onSetServerUrl = () => {
+    handleSetServerUrl(serverUrl, setServerUrlInput, setShowServerModal);
+  };
+
+  // Local wrappers for handle* functions to use as Button handlers
+  const onGenerateKeys = async () => {
     const options: Options = {
       name: 'Test User',
       email: 'j@sus.cx',
@@ -53,147 +216,79 @@ export default function HomeScreen() {
         curve: Curve.CURVE25519,
       }
     };
-    const generatedPublicKey = await generateAndSaveKeys(options);
-    setPublicKey(generatedPublicKey);
-    Alert.alert('Public Key', `Public Key ID: ${generatedPublicKey}`);
-    const pubkey = await getSecret("publicKey");
-    const metadata = await OpenPGP.getPublicKeyMetadata(pubkey!);
-    setPublicKey(metadata.keyID);
+    const keyId = await handleGenerateKeys(options, setPublicKey, getSecret);
+    Alert.alert('Public Key', `Public Key ID: ${keyId}`);
   };
 
-  const handleSendKey = async () => {
-    const pubkey = await getSecret("publicKey");
-    if (pubkey) {
-      await sendKeyToServer(pubkey, serverUrl);
+  const onSendKey = async () => {
+    const result = await handleSendKey(getSecret, sendKeyToServer, serverUrl);
+    if (result.success) {
       Alert.alert('Success', 'Public key sent to server successfully');
     } else {
-      Alert.alert('Error', 'No public key found. Please generate keys first.');
+      Alert.alert('Error', result.error);
     }
   };
 
-  const handleRequestToken = async () => {
-    try {
-      await requestAndVerifyToken(OpenPGP, getSecret, saveSecret, serverUrl);
+  const onRequestToken = async () => {
+    const result = await handleRequestToken(requestAndVerifyToken, OpenPGP, getSecret, saveSecret, serverUrl);
+    if (result.success) {
       Alert.alert('Success', 'Token received and stored successfully');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to complete token request flow');
-      console.error('Error in token flow:', error);
+    } else {
+      Alert.alert('Error', result.error);
+      if (result.details) console.error('Error in token flow:', result.details);
     }
   };
 
-  const handleCreateGroup = async () => {
+  const startBackgroundLocation = async () => {
     try {
-      const token = await getSecret('token');
-      if (!token) {
-        Alert.alert('Error', 'No token found. Please request a token first.');
+      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+      if (foregroundStatus !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required for background sharing.');
         return;
       }
 
-      const response = await fetch('http://192.168.18.8:3000/api/groups', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'authorization': `Bearer ${token}`
+      const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+      if (backgroundStatus !== 'granted') {
+        Alert.alert('Permission Denied', 'Background location permission is required for background sharing.');
+        return;
+      }
+
+      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 5000,
+        distanceInterval: 10,
+        showsBackgroundLocationIndicator: true,
+        foregroundService: {
+          notificationTitle: "Location Sharing",
+          notificationBody: "Sharing your location in the background",
+          notificationColor: "#A1CEDC",
         },
-        body: JSON.stringify({
-          name: groupName,
-          memberKeyIds: memberKeyIds.split(',').map(id => id.trim())
-        })
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Server error:', errorData.error);
-        throw new Error(`Failed to create group: ${errorData.error}`);
-      }
-
-      const result = await response.json();
-      Alert.alert('Success', 'Group created successfully');
-      setShowGroupDialog(false);
-      setGroupName('');
-      setMemberKeyIds('');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to create group');
-      console.error('Error creating group:', error);
+      setIsBackgroundSharing(true);
+      await SecureStore.setItemAsync('backgroundSharing', 'true');
+    } catch (e) {
+      console.error('Error starting background location:', e);
+      Alert.alert('Error', 'Failed to start background location sharing');
     }
   };
 
-  const handleSendLocationUpdate = async () => {
-    setLoadingLocation(true);
+  const stopBackgroundLocation = async () => {
     try {
-      if (!serverUrl) throw new Error('Server URL not set. Please set it first.');
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Location permission is required.');
-        setLoadingLocation(false);
-        return;
-      }
-      const location = await Location.getCurrentPositionAsync({});
-      const token = await getSecret('token');
-      const privkey = await getSecret('privateKey');
-      if (!token || !privkey) {
-        Alert.alert('Error', 'Missing token or private key.');
-        setLoadingLocation(false);
-        return;
-      }
-      const groupsRes = await fetch(`${serverUrl}/api/groups`, {
-        headers: { 'authorization': `Bearer ${token}` }
-      });
-      if (!groupsRes.ok) throw new Error('Failed to fetch groups');
-      const groups = await groupsRes.json();
-      for (const group of groups) {
-        const otherMembers = group.members.filter((m: any) => m.keyid !== group.myKeyId);
-        if (otherMembers.length === 0) continue;
-        // Fetch public keys for other members individually
-        const pubkeyArr = [];
-        for (const member of otherMembers) {
-          const res = await fetch(`${serverUrl}/api/keys?keyId=${encodeURIComponent(member.keyid)}`, {
-            headers: { 'authorization': `Bearer ${token}` }
-          });
-          if (!res.ok) throw new Error('Failed to fetch public key for ' + member.keyid);
-          const data = await res.json();
-          if (data.publicKey) pubkeyArr.push(data.publicKey);
-        }
-        if (pubkeyArr.length === 0) continue;
-        const locationData = {
-          groupId: group.id,
-          timestamp: new Date().toISOString(),
-          coords: location.coords
-        };
-        const plaintext = JSON.stringify(locationData);
-        const publicKeys = pubkeyArr.join('\n');
-        const ciphertext = await OpenPGP.encrypt(plaintext, publicKeys);
-        console.log(ciphertext);
-        const postRes = await fetch(`${serverUrl}/api/location`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'authorization': `Bearer ${token}` },
-          body: JSON.stringify({ groupIds: [group.id], cipherText: ciphertext })
-        });
-        if (!postRes.ok) throw new Error('Failed to post location');
-      }
-      Alert.alert('Success', 'Location update sent to all groups.');
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to send location update');
-      console.error('Location update error:', e);
-    } finally {
-      setLoadingLocation(false);
+      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+      setIsBackgroundSharing(false);
+      await SecureStore.setItemAsync('backgroundSharing', 'false');
+    } catch (e) {
+      console.error('Error stopping background location:', e);
+      Alert.alert('Error', 'Failed to stop background location sharing');
     }
   };
 
-  const handleSetServerUrl = () => {
-    setServerUrlInput(serverUrl);
-    setShowServerModal(true);
-  };
-
-  const handleSaveServerUrl = async () => {
-    if (!serverUrlInput.startsWith('http://') && !serverUrlInput.startsWith('https://')) {
-      Alert.alert('Invalid URL', 'URL must start with http:// or https://');
-      return;
+  const toggleBackgroundSharing = async () => {
+    if (isBackgroundSharing) {
+      await stopBackgroundLocation();
+    } else {
+      await startBackgroundLocation();
     }
-    await SecureStore.setItemAsync('serverUrl', serverUrlInput);
-    setServerUrl(serverUrlInput);
-    setShowServerModal(false);
-    Alert.alert('Success', 'Server URL saved!');
   };
 
   return (
@@ -211,15 +306,22 @@ export default function HomeScreen() {
       </ThemedView>
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Things</ThemedText>
-        <Button title="Generate Keys" onPress={handleGenerateKeys} />
+        <Button title="Generate Keys" onPress={onGenerateKeys} />
         {publicKey && (
           <>
             <ThemedText>Public Key ID: {publicKey}</ThemedText>
-            <Button title="Send Key to Server" onPress={handleSendKey} />
-            <Button title="Request Token" onPress={handleRequestToken} />
+            <Button title="Send Key to Server" onPress={onSendKey} />
+            <Button title="Request Token" onPress={onRequestToken} />
             <Button title="Create Group" onPress={() => setShowGroupDialog(true)} />
-            <Button title={loadingLocation ? 'Sending...' : 'Send Location Update'} onPress={handleSendLocationUpdate} disabled={loadingLocation} />
-            <Button title="Set Server URL" onPress={handleSetServerUrl} />
+            <Button title={loadingLocation ? 'Sending...' : 'Send Location Update'} onPress={() => onSendLocationUpdate(true)} disabled={loadingLocation} />
+            <Button title="Set Server URL" onPress={onSetServerUrl} />
+            <View style={styles.switchContainer}>
+              <ThemedText>Background Location Sharing</ThemedText>
+              <Switch
+                value={isBackgroundSharing}
+                onValueChange={toggleBackgroundSharing}
+              />
+            </View>
           </>
         )}
       </ThemedView>
@@ -244,7 +346,7 @@ export default function HomeScreen() {
             />
             <View style={styles.dialogButtons}>
               <Button title="Cancel" onPress={() => setShowGroupDialog(false)} />
-              <Button title="Create" onPress={handleCreateGroup} />
+              <Button title="Create" onPress={onCreateGroup} />
             </View>
           </ThemedView>
         </View>
@@ -262,7 +364,7 @@ export default function HomeScreen() {
             />
             <View style={styles.dialogButtons}>
               <Button title="Cancel" onPress={() => setShowServerModal(false)} />
-              <Button title="Save" onPress={handleSaveServerUrl} />
+              <Button title="Save" onPress={onSaveServerUrl} />
             </View>
           </ThemedView>
         </View>
@@ -321,5 +423,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 8,
     marginTop: 16,
+  },
+  switchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
   },
 });

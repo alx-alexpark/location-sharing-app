@@ -1,4 +1,4 @@
-package com.anonymous.locationsharing
+package dev.parkalex.locationsharing
 
 import android.app.Application
 import android.content.res.Configuration

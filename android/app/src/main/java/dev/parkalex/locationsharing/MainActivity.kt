@@ -1,4 +1,4 @@
-package com.anonymous.locationsharing
+package dev.parkalex.locationsharing
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
