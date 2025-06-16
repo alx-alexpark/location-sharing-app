@@ -12,7 +12,6 @@ const generateRandomId = () => {
 export default function App() {
   const [markers, setMarkers] = useState<any[]>([]);
   const cameraRef = useRef<any>(null);
-  const hasInitialized = useRef(false);
 
   const calculateBounds = (markerList: any[]) => {
     if (markerList.length === 0) return null;
@@ -103,7 +102,7 @@ export default function App() {
         setMarkers(markerList);
 
         // Only do initial bounds fitting once when we first get markers
-        if (!hasInitialized.current && markerList.length > 0 && cameraRef.current) {
+        if (markerList.length > 0 && cameraRef.current) {
           const bounds = calculateBounds(markerList);
           if (bounds) {
             cameraRef.current.fitBounds(
@@ -112,7 +111,6 @@ export default function App() {
               { padding: 50 },
               100
             );
-            hasInitialized.current = true;
           }
         }
       } catch (e: any) {
@@ -128,7 +126,7 @@ export default function App() {
 
     // Cleanup interval on component unmount
     return () => clearInterval(intervalId);
-  }, []);
+  }, [markers]);
 
   return (
     <View style={styles.container}>
@@ -143,24 +141,28 @@ export default function App() {
             zoomLevel: 1
           }} 
         />
-        {markers.map((marker) => (
-          <PointAnnotation
-            key={generateRandomId()}
-            id={generateRandomId()}
-            coordinate={[marker.lng, marker.lat]}
-            title={marker.user}
-            snippet={`Last updated: ${new Date(marker.timestamp).toLocaleString()}`}
-            anchor={{ x: 0.5, y: 0.5 }}
-            onSelected={(feature) => {
-              console.log('Selected marker:', feature);
-              zoomToMarker(marker);
-            }}
-          >
-            <View style={styles.marker}>
-              <View style={styles.markerDot} />
-            </View>
-          </PointAnnotation>
-        ))}
+        {markers.map((marker) => {
+          // Get the first initial (uppercase) from the user string
+          const initial = marker.user.fullName && typeof marker.user.fullName === 'string' ? marker.user.fullName.charAt(0).toUpperCase() : '?';
+          return (
+            <PointAnnotation
+              key={generateRandomId()}
+              id={generateRandomId()}
+              coordinate={[marker.lng, marker.lat]}
+              title={marker.user}
+              snippet={`Last updated: ${new Date(marker.timestamp).toLocaleString()}`}
+              anchor={{ x: 0.5, y: 0.5 }}
+              onSelected={(feature) => {
+                console.log('Selected marker:', feature);
+                zoomToMarker(marker);
+              }}
+            >
+              <View style={styles.markerInitialContainer}>
+                <Text style={styles.markerInitialText}>{initial}</Text>
+              </View>
+            </PointAnnotation>
+          );
+        })}
       </MapView>
       <TouchableOpacity 
         style={styles.resetButton}
@@ -178,19 +180,25 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  marker: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0, 122, 255, 0.2)',
+  markerInitialContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  markerDot: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#007AFF',
+  markerInitialText: {
+    color: '#007AFF',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   resetButton: {
     position: 'absolute',
@@ -216,11 +224,11 @@ const styles = StyleSheet.create({
 
 const mapStyle = {
   "version": 8,
-	"sources": {
+  "sources": {
     "osm": {
-			"type": "raster",
-			"tiles": ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
-			"tileSize": 256,
+      "type": "raster",
+      "tiles": ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      "tileSize": 256,
       "attribution": "&copy; OpenStreetMap Contributors",
       "maxzoom": 19
     }
