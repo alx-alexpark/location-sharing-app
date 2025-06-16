@@ -31,10 +31,14 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     if (locations && locations.length > 0) {
       console.log('Processing background location:', locations[0].coords)
       try {
-        await handleLocationUpdate({
+        const result = await handleLocationUpdate({
           location: locations[0]
         });
-        console.log('Successfully processed background location update');
+        if (result.success) {
+          console.log('Successfully processed background location update');
+        } else {
+          console.error('Failed to process background location:', result.error);
+        }
       } catch (e) {
         console.error('Error processing background location:', e);
       }
@@ -108,6 +112,7 @@ export default function RootLayout() {
       }
       console.log('Notifications granted');
 
+      // Request background location permission
       const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync()
       console.log('Background permission status:', backgroundStatus);
       
@@ -127,7 +132,7 @@ export default function RootLayout() {
           const foregroundService = Platform.select({
             android: {
               notificationTitle: 'Location Tracking Active',
-              notificationBody: 'Tracking your location in the background',
+              notificationBody: 'Sharing your location with your groups',
               notificationColor: '#4CAF50',
               killServiceOnDestroy: false,
               notificationPriority: 'high',
@@ -136,51 +141,65 @@ export default function RootLayout() {
               notificationChannelDescription: 'Shows when location tracking is active',
               notificationChannelImportance: 'high',
               notificationChannelShowBadge: true,
-              notificationChannelEnableVibration: true,
-              notificationChannelEnableLights: true,
+              notificationChannelEnableVibration: false,
+              notificationChannelEnableLights: false,
               startOnBoot: true,
               stopOnTerminate: false
             },
             ios: undefined,
           });
 
-          // Start new location updates with foreground service
+          // Start new location updates with more aggressive settings for better background performance
           await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
             accuracy: Location.Accuracy.Balanced,
-            timeInterval: 60000, // Update every 60 seconds (1 minute)
-            distanceInterval: 20, // Update every 20 meters
+            timeInterval: 30000, // Update every 30 seconds (reduced from 60s)
+            distanceInterval: 10, // Update every 10 meters (reduced from 20m)
             showsBackgroundLocationIndicator: true, // iOS only
             foregroundService, // Only used on Android
-            deferredUpdatesInterval: 60000, // Minimum time interval between updates
-            deferredUpdatesDistance: 20, // Minimum distance between updates
-            activityType: Location.ActivityType.Other // iOS only, helps keep the app active
+            deferredUpdatesInterval: 30000, // Minimum time interval between updates
+            deferredUpdatesDistance: 10, // Minimum distance between updates
+            activityType: Location.ActivityType.Other, // iOS only
+            pausesUpdatesAutomatically: false, // Don't pause location updates
+            mayShowUserSettingsDialog: true // Allow showing settings dialog if needed
           });
-          console.log('Started background location updates');
+          console.log('Started background location updates with enhanced settings');
 
-          // Register background fetch
-          await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
-            minimumInterval: 60 * 15, // 15 minutes
-            stopOnTerminate: false,
-            startOnBoot: true,
-          });
-          console.log('Registered background fetch task');
+          // Register background fetch with shorter interval
+          try {
+            await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
+              minimumInterval: 60 * 5, // 5 minutes (reduced from 15)
+              stopOnTerminate: false,
+              startOnBoot: true,
+            });
+            console.log('Registered background fetch task');
+          } catch (fetchError) {
+            console.error('Failed to register background fetch:', fetchError);
+          }
 
           // Verify task is running
           const isTaskRunning = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
           if (isTaskRunning) {
             console.log('Background location tracking is running!');
-            Alert.alert('Success', 'Background location tracking is running!');
+            Alert.alert('Success', 'Background location tracking is now active!');
           } else {
             console.error('Failed to start background location tracking');
             Alert.alert('Error', 'Failed to start background location tracking');
           }
         } catch (error) {
           console.error('Error setting up background location:', error);
-          Alert.alert('Error', 'Failed to set up background location tracking');
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+          Alert.alert('Error', `Failed to set up background location tracking: ${errorMessage}`);
         }
       } else {
         console.error('Background location permission denied');
-        Alert.alert('Permission Denied', 'Background location permission is required for tracking');
+        Alert.alert(
+          'Permission Required', 
+          'Background location permission is required for location sharing. Please enable "Allow all the time" in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Location.enableNetworkProviderAsync() }
+          ]
+        );
       }
     }
 

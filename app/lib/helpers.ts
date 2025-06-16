@@ -2,6 +2,7 @@
 import * as SecureStore from 'expo-secure-store';
 import OpenPGP from 'react-native-fast-openpgp';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 
 export async function saveSecret(key: string, value: string) {
   await SecureStore.setItemAsync(key, value);
@@ -258,4 +259,39 @@ export async function handleSaveServerUrl(serverUrlInput: string, setServerUrl: 
 export function handleSetServerUrl(serverUrl: string, setServerUrlInput: (url: string) => void, setShowServerModal: (show: boolean) => void) {
   setServerUrlInput(serverUrl);
   setShowServerModal(true);
-} 
+}
+
+/**
+ * Debug function to check background location status
+ */
+export async function checkBackgroundLocationStatus() {
+  try {
+    const foregroundStatus = await Location.getForegroundPermissionsAsync();
+    const backgroundStatus = await Location.getBackgroundPermissionsAsync();
+    
+    console.log('=== Background Location Status ===');
+    console.log('Foreground permission:', foregroundStatus.status);
+    console.log('Background permission:', backgroundStatus.status);
+    console.log('Can ask again (foreground):', foregroundStatus.canAskAgain);
+    console.log('Can ask again (background):', backgroundStatus.canAskAgain);
+    
+    const taskStatus = await TaskManager.isTaskRegisteredAsync('background-location-task');
+    console.log('Task registered:', taskStatus);
+    
+    if (taskStatus) {
+      const taskInfo = await TaskManager.getTaskOptionsAsync('background-location-task');
+      console.log('Task options:', taskInfo);
+    }
+    
+    return {
+      foregroundStatus: foregroundStatus.status,
+      backgroundStatus: backgroundStatus.status,
+      taskRegistered: taskStatus,
+      canAskForeground: foregroundStatus.canAskAgain,
+      canAskBackground: backgroundStatus.canAskAgain
+    };
+  } catch (error) {
+    console.error('Error checking background location status:', error);
+    return null;
+  }
+}

@@ -4,6 +4,7 @@ import { LeafletView } from 'react-native-leaflet-view';
 import * as SecureStore from 'expo-secure-store';
 import OpenPGP from 'react-native-fast-openpgp';
 import { Camera, MapView, PointAnnotation } from '@maplibre/maplibre-react-native';
+import { checkBackgroundLocationStatus } from '../lib/helpers';
 
 const generateRandomId = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
@@ -62,8 +63,21 @@ export default function App() {
     }
   };
 
+  const checkLocationStatus = async () => {
+    const status = await checkBackgroundLocationStatus();
+    if (status) {
+      Alert.alert(
+        'Background Location Status',
+        `Foreground: ${status.foregroundStatus}\nBackground: ${status.backgroundStatus}\nTask registered: ${status.taskRegistered}`,
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
   useEffect(() => {
-    console.log('fetching locations');
+    console.log('Setting up location fetching effect');
+    let isInitialFetch = true;
+    
     const fetchLocations = async () => {
       try {
         const serverUrl = await SecureStore.getItemAsync('serverUrl');
@@ -83,7 +97,7 @@ export default function App() {
           try {
             const decrypted = await OpenPGP.decrypt(update.cipherText, privkey, '');
             const data = JSON.parse(decrypted);
-            console.log("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", data);
+            console.log("Decrypted location data:", data);
             if (data.coords && data.coords.latitude && data.coords.longitude) {
               markerList.push({
                 id: update.id,
@@ -99,10 +113,17 @@ export default function App() {
             console.error('Failed to decrypt location update', update.id, e);
           }
         }
-        setMarkers(markerList);
+        
+        setMarkers(prevMarkers => {
+          // Only update if markers actually changed to prevent unnecessary re-renders
+          if (JSON.stringify(prevMarkers) !== JSON.stringify(markerList)) {
+            return markerList;
+          }
+          return prevMarkers;
+        });
 
         // Only do initial bounds fitting once when we first get markers
-        if (markerList.length > 0 && cameraRef.current) {
+        if (isInitialFetch && markerList.length > 0 && cameraRef.current) {
           const bounds = calculateBounds(markerList);
           if (bounds) {
             cameraRef.current.fitBounds(
@@ -112,6 +133,7 @@ export default function App() {
               100
             );
           }
+          isInitialFetch = false;
         }
       } catch (e: any) {
         Alert.alert('Error', e.message || 'Failed to load location updates');
@@ -121,12 +143,15 @@ export default function App() {
     // Initial fetch
     fetchLocations();
 
-    // Set up polling every 5 seconds
+    // Set up polling every 2.5 seconds
     const intervalId = setInterval(fetchLocations, 2500);
 
     // Cleanup interval on component unmount
-    return () => clearInterval(intervalId);
-  }, [markers]);
+    return () => {
+      console.log('Cleaning up location fetching effect');
+      clearInterval(intervalId);
+    };
+  }, []); // Run only once on mount
 
   return (
     <View style={styles.container}>
@@ -169,6 +194,12 @@ export default function App() {
         onPress={resetView}
       >
         <Text style={styles.resetButtonText}>Reset View</Text>
+      </TouchableOpacity>
+      <TouchableOpacity 
+        style={[styles.resetButton, { bottom: 80 }]}
+        onPress={checkLocationStatus}
+      >
+        <Text style={styles.resetButtonText}>Check Status</Text>
       </TouchableOpacity>
     </View>
   );
