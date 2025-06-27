@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { StyleSheet, View, Alert, TouchableOpacity, Text } from 'react-native';
-import { LeafletView } from 'react-native-leaflet-view';
 import * as SecureStore from 'expo-secure-store';
 import OpenPGP from 'react-native-fast-openpgp';
 import { Camera, MapView, PointAnnotation } from '@maplibre/maplibre-react-native';

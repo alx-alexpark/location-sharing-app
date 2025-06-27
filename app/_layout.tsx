@@ -8,8 +8,6 @@ import 'react-native-reanimated';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundFetch from 'expo-background-fetch';
-import OpenPGP from 'react-native-fast-openpgp';
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
