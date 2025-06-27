@@ -12,7 +12,7 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { handleLocationUpdate } from './lib/helpers';
+import { sendLocationUpdate } from './lib/locations';
 import { Alert } from 'react-native';
 
 const LOCATION_TASK_NAME = 'background-location-task'
@@ -29,7 +29,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     if (locations && locations.length > 0) {
       console.log('Processing background location:', locations[0].coords)
       try {
-        const result = await handleLocationUpdate({
+        const result = await sendLocationUpdate({
           location: locations[0]
         });
         if (result.success) {
@@ -88,7 +88,7 @@ export default function RootLayout() {
         },
         async (location) => {
           console.log("LOCATION UPDATED", location);
-          await handleLocationUpdate({
+          await sendLocationUpdate({
             location,
           });
         }

@@ -1,5 +1,4 @@
 import { Image, StyleSheet, Button, View, Alert, TextInput } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
 import { useState, useEffect } from 'react';
 import OpenPGP, { Curve, Options } from "react-native-fast-openpgp";
 import React from 'react';
@@ -8,15 +7,19 @@ import { HelloWave } from '@/components/HelloWave';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import { saveSecret, getSecret, sendKeyToServer, requestAndVerifyToken, handleGenerateKeys, handleSendKey, handleRequestToken, handleCreateGroup, handleSendLocationUpdate, handleSaveServerUrl, handleSetServerUrl } from '../lib/helpers';
+
+import { getSecret } from '../lib/secrets';
+import { createGroup } from '../lib/groups';
+import { getCurrentLocation, sendLocationUpdate } from '../lib/locations';
+import { saveServerUrl } from '../lib/server';
+import { sendKeyToServer, generateAndSaveKeys } from '../lib/keys';
+import { requestAndVerifyToken } from '../lib/tokens';
 
 export default function HomeScreen() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [groupName, setGroupName] = useState('');
   const [memberKeyIds, setMemberKeyIds] = useState('');
   const [showGroupDialog, setShowGroupDialog] = useState(false);
-  const [loadingLocation, setLoadingLocation] = useState(false);
-  const [serverUrl, setServerUrl] = useState<string>('');
   const [serverUrlInput, setServerUrlInput] = useState<string>('');
   const [showServerModal, setShowServerModal] = useState(false);
 
@@ -34,14 +37,6 @@ export default function HomeScreen() {
     };
 
     loadExistingKeys();
-  }, []);
-
-  useEffect(() => {
-    const loadServerUrl = async () => {
-      const url = await SecureStore.getItemAsync('serverUrl');
-      if (url) setServerUrl(url);
-    };
-    loadServerUrl();
   }, []);
 
   // Add useEffect for auto-updates
@@ -65,16 +60,14 @@ export default function HomeScreen() {
   }, []); // Empty dependency array means this runs once when component mounts
 
   const onCreateGroup = async () => {
-    const result = await handleCreateGroup({
+    const result = await createGroup({
       groupName,
-      memberKeyIds,
-      getSecret,
-      serverUrl,
-      setShowGroupDialog,
-      setGroupName,
-      setMemberKeyIds,
+      memberKeyIds
     });
     if (result.success) {
+      setShowGroupDialog(false);
+      setGroupName('');
+      setMemberKeyIds('');
       Alert.alert('Success', 'Group created successfully');
     } else {
       Alert.alert('Error', result.error);
@@ -83,36 +76,31 @@ export default function HomeScreen() {
   };
 
   const onSendLocationUpdate = async (showAlerts = true) => {
-    const result = await handleSendLocationUpdate({
-      serverUrl,
-      setLoadingLocation,
-      getSecret,
-      OpenPGP,
-    });
-    if (showAlerts) {
-      if (result.success) {
-        Alert.alert('Success', 'Location update sent to all groups.');
-      } else {
-        Alert.alert('Error', result.error);
-        if (result.details) console.error('Location update error:', result.details);
+    const location = await getCurrentLocation();
+
+    if (location) {
+      const result = await sendLocationUpdate({ location });
+      if (showAlerts) {
+        if (result.success) {
+          Alert.alert('Success', 'Location update sent to all groups.');
+        } else {
+          if (result.details) console.error('Location update error:', result.details);
+          Alert.alert('Error', result.error);
+        }
       }
     }
   };
 
   const onSaveServerUrl = async () => {
-    const result = await handleSaveServerUrl(serverUrlInput, setServerUrl, setShowServerModal);
+    const result = await saveServerUrl(serverUrlInput);
     if (result.success) {
+      setShowServerModal(false);
       Alert.alert('Success', 'Server URL saved!');
     } else {
       Alert.alert('Invalid URL', result.error);
     }
   };
 
-  const onSetServerUrl = () => {
-    handleSetServerUrl(serverUrl, setServerUrlInput, setShowServerModal);
-  };
-
-  // Local wrappers for handle* functions to use as Button handlers
   const onGenerateKeys = async () => {
     const options: Options = {
       name: 'Test User',
@@ -121,12 +109,12 @@ export default function HomeScreen() {
         curve: Curve.CURVE25519,
       }
     };
-    const keyId = await handleGenerateKeys(options, setPublicKey, getSecret);
-    Alert.alert('Public Key', `Public Key ID: ${keyId}`);
+
+    await generateAndSaveKeys(options);
   };
 
   const onSendKey = async () => {
-    const result = await handleSendKey(getSecret, sendKeyToServer, serverUrl);
+    const result = await sendKeyToServer();
     if (result.success) {
       Alert.alert('Success', 'Public key sent to server successfully');
     } else {
@@ -135,7 +123,7 @@ export default function HomeScreen() {
   };
 
   const onRequestToken = async () => {
-    const result = await handleRequestToken(requestAndVerifyToken, OpenPGP, getSecret, saveSecret, serverUrl);
+    const result = await requestAndVerifyToken();
     if (result.success) {
       Alert.alert('Success', 'Token received and stored successfully');
     } else {
@@ -166,8 +154,8 @@ export default function HomeScreen() {
             <Button title="Send Key to Server" onPress={onSendKey} />
             <Button title="Request Token" onPress={onRequestToken} />
             <Button title="Create Group" onPress={() => setShowGroupDialog(true)} />
-            <Button title={loadingLocation ? 'Sending...' : 'Send Location Update'} onPress={() => onSendLocationUpdate(true)} disabled={loadingLocation} />
-            <Button title="Set Server URL" onPress={onSetServerUrl} />
+            <Button title="Send Location Update" onPress={() => onSendLocationUpdate(true)} />
+            <Button title="Set Server URL" onPress={() => setShowServerModal(true)} />
           </>
         )}
       </ThemedView>

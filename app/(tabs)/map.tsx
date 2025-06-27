@@ -3,7 +3,7 @@ import { StyleSheet, View, Alert, TouchableOpacity, Text } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import OpenPGP from 'react-native-fast-openpgp';
 import { Camera, MapView, PointAnnotation } from '@maplibre/maplibre-react-native';
-import { checkBackgroundLocationStatus } from '../lib/helpers';
+import { checkBackgroundLocationStatus } from '../lib/locations';
 
 const generateRandomId = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
