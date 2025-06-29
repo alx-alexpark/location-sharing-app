@@ -10,7 +10,7 @@ export async function createGroup({ groupName, memberKeyIds }: {
     if (!token) {
       return { success: false, error: 'No token found. Please request a token first.' };
     }
-    const serverUrl = getServerUrl();
+    const serverUrl = await getServerUrl();
     const response = await fetch(`${serverUrl}/api/groups`, {
       method: 'POST',
       headers: {

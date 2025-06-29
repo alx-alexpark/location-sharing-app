@@ -12,7 +12,7 @@ export async function generateAndSaveKeys(OpenPGPOptions: any) {
 
 export async function sendKeyToServer() {
   const pubkey = await getSecret("publicKey");
-  const serverUrl = getServerUrl();
+  const serverUrl = await getServerUrl();
   const response = await fetch(`${serverUrl}/api/signUp`, {
     method: 'POST',
     headers: {

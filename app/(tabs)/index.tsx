@@ -1,10 +1,9 @@
-import { Image, StyleSheet, Button, View, Alert, TextInput } from 'react-native';
+import { StyleSheet, Button, View, Alert, TextInput } from 'react-native';
 import { useState, useEffect } from 'react';
 import OpenPGP, { Curve, Options } from "react-native-fast-openpgp";
 import React from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 
@@ -110,7 +109,9 @@ export default function HomeScreen() {
       }
     };
 
-    await generateAndSaveKeys(options);
+    const key = await generateAndSaveKeys(options);
+    const metadata = await OpenPGP.getPublicKeyMetadata(key);
+    setPublicKey(metadata.keyID);
   };
 
   const onSendKey = async () => {
@@ -124,7 +125,7 @@ export default function HomeScreen() {
 
   const onRequestToken = async () => {
     const result = await requestAndVerifyToken();
-    if (result.success) {
+    if (result) {
       Alert.alert('Success', 'Token received and stored successfully');
     } else {
       Alert.alert('Error', result.error);
@@ -133,17 +134,9 @@ export default function HomeScreen() {
   };
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
+    <SafeAreaView style={styles.container}>
       <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Testing screen</ThemedText>
-        <HelloWave />
+        <ThemedText type="title">Debugging</ThemedText>
       </ThemedView>
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Things</ThemedText>
@@ -203,11 +196,15 @@ export default function HomeScreen() {
           </ThemedView>
         </View>
       )}
-    </ParallaxScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    padding: 50,
+    backgroundColor: 'white'
+  },
   titleContainer: {
     flexDirection: 'row',
     alignItems: 'center',

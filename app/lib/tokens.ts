@@ -11,7 +11,7 @@ export async function requestAndVerifyToken() {
   }
   const metadata = await OpenPGP.getPublicKeyMetadata(pubkey);
   const keyId = metadata.keyID;
-  const serverUrl = getServerUrl();
+  const serverUrl = await getServerUrl();
   const tokenResponse = await fetch(`${serverUrl}/api/requestToken`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
