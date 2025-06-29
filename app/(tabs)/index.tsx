@@ -136,7 +136,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Debugging</ThemedText>
+        <ThemedText type="title">Debug</ThemedText>
       </ThemedView>
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Things</ThemedText>
