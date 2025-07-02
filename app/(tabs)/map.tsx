@@ -1,19 +1,24 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { StyleSheet, View, Alert, TouchableOpacity, Text } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import OpenPGP from 'react-native-fast-openpgp';
 import { Camera, MapView, PointAnnotation } from '@maplibre/maplibre-react-native';
 import { checkBackgroundLocationStatus } from '../lib/locations';
 
-const generateRandomId = () => {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-};
+const zoomLevels: number[][] = [];
+for (let i=0; i < 21; i++) {
+  zoomLevels.unshift([i, 360 / Math.pow(2, i)]);
+}
 
 export default function App() {
   const [markers, setMarkers] = useState<any[]>([]);
   const cameraRef = useRef<any>(null);
 
-  const calculateBounds = (markerList: any[]) => {
+  const [centerX, setCenterX] = useState(0);
+  const [centerY, setCenterY] = useState(0);
+  const [zoomLevel, setZoomLevel] = useState(1);
+
+  const calculateCamera = (markerList: any[]) => {
     if (markerList.length === 0) return null;
 
     let minLat = markerList[0].lat;
@@ -28,37 +33,44 @@ export default function App() {
       maxLng = Math.max(maxLng, marker.lng);
     });
 
-    // Add some padding
-    const latPadding = (maxLat - minLat) * 0.1;
-    const lngPadding = (maxLng - minLng) * 0.1;
+    const width = maxLng - minLng;
+    const height = maxLat - minLat;
+
+    const centerX = minLng + (width / 2);
+    const centerY = minLat + (height / 2);
+
+    const longDim = Math.max(width, height);
+    let zoom = 0;
+    for (const [level, levelWidth] of zoomLevels) {
+      console.log(levelWidth)
+      zoom = level;
+      if (levelWidth > longDim) {
+        break;
+      }
+    }
 
     return {
-      southWest: { lat: minLat - latPadding, lng: minLng - lngPadding },
-      northEast: { lat: maxLat + latPadding, lng: maxLng + lngPadding }
-    };
+      centerCoordinate: [centerX, centerY],
+      zoomLevel: zoom
+    }
   };
 
   const resetView = () => {
     if (markers.length > 0 && cameraRef.current) {
-      const bounds = calculateBounds(markers);
-      if (bounds) {
-        cameraRef.current.fitBounds(
-          [bounds.northEast.lng, bounds.northEast.lat],
-          [bounds.southWest.lng, bounds.southWest.lat],
-          { padding: 50 },
-          100
-        );
+      const camera = calculateCamera(markers);
+      if (camera) {
+        setCenterX(camera.centerCoordinate[0]);
+        setCenterY(camera.centerCoordinate[1]);
+        setZoomLevel(camera.zoomLevel);
       }
     }
   };
 
   const zoomToMarker = (marker: any) => {
     if (cameraRef.current) {
-      cameraRef.current.setCamera({
-        centerCoordinate: [marker.lng, marker.lat],
-        zoomLevel: 15,
-        animationDuration: 300
-      });
+      setCenterX(marker.lng);
+      setCenterY(marker.lat);
+      setZoomLevel(15);
     }
   };
 
@@ -73,84 +85,74 @@ export default function App() {
     }
   };
 
+  const fetchLocations = useCallback(async (initial: boolean) => {
+    try {
+      const serverUrl = await SecureStore.getItemAsync('serverUrl');
+      const token = await SecureStore.getItemAsync('token');
+      const privkey = await SecureStore.getItemAsync('privateKey');
+      if (!serverUrl || !token || !privkey) {
+        Alert.alert('Error', 'Missing server URL, token, or private key.');
+        return;
+      }
+      const res = await fetch(`${serverUrl}/api/location?limit=1`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch location updates');
+      const updates = await res.json();
+      const markerList: any[] = [];
+      for (const update of updates) {
+        try {
+          const decrypted = await OpenPGP.decrypt(update.cipherText, privkey, '');
+          const data = JSON.parse(decrypted);
+          console.log("Decrypted location data:", data);
+          if (data.coords && data.coords.latitude && data.coords.longitude) {
+            markerList.push({
+              id: update.id,
+              lat: data.coords.latitude,
+              lng: data.coords.longitude,
+              user: update.user,
+              timestamp: update.timestamp,
+              group: update.Group,
+            });
+          }
+        } catch (e: any) {
+          console.error('Failed to decrypt location update', update.id, e);
+        }
+      }
+      
+      setMarkers(prevMarkers => {
+        if (JSON.stringify(prevMarkers) !== JSON.stringify(markerList)) {
+          return markerList;
+        }
+        return prevMarkers;
+      });
+
+      if (markerList.length > 0 && cameraRef.current && initial) {
+        const camera = calculateCamera(markerList);
+        console.log(camera)
+        if (camera) {
+          setCenterX(camera.centerCoordinate[0]);
+          setCenterY(camera.centerCoordinate[1]);
+          setZoomLevel(camera.zoomLevel);
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to load locat ion updates');
+    }
+  }, []);
+
   useEffect(() => {
     console.log('Setting up location fetching effect');
-    let isInitialFetch = true;
-    
-    const fetchLocations = async () => {
-      try {
-        const serverUrl = await SecureStore.getItemAsync('serverUrl');
-        const token = await SecureStore.getItemAsync('token');
-        const privkey = await SecureStore.getItemAsync('privateKey');
-        if (!serverUrl || !token || !privkey) {
-          Alert.alert('Error', 'Missing server URL, token, or private key.');
-          return;
-        }
-        const res = await fetch(`${serverUrl}/api/location?limit=1`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error('Failed to fetch location updates');
-        const updates = await res.json();
-        const markerList: any[] = [];
-        for (const update of updates) {
-          try {
-            const decrypted = await OpenPGP.decrypt(update.cipherText, privkey, '');
-            const data = JSON.parse(decrypted);
-            console.log("Decrypted location data:", data);
-            if (data.coords && data.coords.latitude && data.coords.longitude) {
-              markerList.push({
-                id: update.id,
-                lat: data.coords.latitude,
-                lng: data.coords.longitude,
-                user: update.user,
-                timestamp: update.timestamp,
-                group: update.Group,
-              });
-            }
-          } catch (e: any) {
-            // Ignore decryption errors for individual updates
-            console.error('Failed to decrypt location update', update.id, e);
-          }
-        }
-        
-        setMarkers(prevMarkers => {
-          // Only update if markers actually changed to prevent unnecessary re-renders
-          if (JSON.stringify(prevMarkers) !== JSON.stringify(markerList)) {
-            return markerList;
-          }
-          return prevMarkers;
-        });
 
-        // Only do initial bounds fitting once when we first get markers
-        if (isInitialFetch && markerList.length > 0 && cameraRef.current) {
-          const bounds = calculateBounds(markerList);
-          if (bounds) {
-            cameraRef.current.fitBounds(
-              [bounds.northEast.lng, bounds.northEast.lat],
-              [bounds.southWest.lng, bounds.southWest.lat],
-              { padding: 50 },
-              100
-            );
-          }
-          isInitialFetch = false;
-        }
-      } catch (e: any) {
-        Alert.alert('Error', e.message || 'Failed to load location updates');
-      }
-    };
+    fetchLocations(true);
 
-    // Initial fetch
-    fetchLocations();
+    const intervalId = setInterval(() => fetchLocations(false), 5000);
 
-    // Set up polling every 2.5 seconds
-    const intervalId = setInterval(fetchLocations, 2500);
-
-    // Cleanup interval on component unmount
     return () => {
       console.log('Cleaning up location fetching effect');
       clearInterval(intervalId);
     };
-  }, []); // Run only once on mount
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -160,18 +162,19 @@ export default function App() {
       >
         <Camera 
           ref={cameraRef}
-          defaultSettings={{
-            centerCoordinate: [0, 0],
-            zoomLevel: 1
-          }} 
+          centerCoordinate={[centerX, centerY]}
+          zoomLevel={zoomLevel}
+          animationMode="flyTo"
+          animationDuration={300}
+          followUserLocation={false}
         />
         {markers.map((marker) => {
           // Get the first initial (uppercase) from the user string
           const initial = marker.user.fullName && typeof marker.user.fullName === 'string' ? marker.user.fullName.charAt(0).toUpperCase() : '?';
           return (
             <PointAnnotation
-              key={generateRandomId()}
-              id={generateRandomId()}
+              key={marker.id.toString()}
+              id={marker.id.toString()}
               coordinate={[marker.lng, marker.lat]}
               title={marker.user}
               snippet={`Last updated: ${new Date(marker.timestamp).toLocaleString()}`}
